@@ -16,8 +16,11 @@ public:
 	void OnLButtonDblClk(POINT point);
 	void OnLButtonDown(POINT point);
 	void OnLButtonUp(POINT point);
+    void OnRButtonUp(POINT point);
 	BOOL OnSetCursor(HWND pWnd, UINT nHitTest);
 	void OnMouseMove(POINT point);
+    void UpdateRemark();
+    int GetEncoderClsid(const WCHAR* format, CLSID* pClsid) ;
 private:
 
 	HWND m_hWnd;
@@ -66,5 +69,8 @@ private:
 	void DrawText(HDC dc,int x,int y,LPCWSTR lpString,int size);
 
 	void InitGrayBitMap();
+
+
+    HWND m_hEditWnd;
 };
 
