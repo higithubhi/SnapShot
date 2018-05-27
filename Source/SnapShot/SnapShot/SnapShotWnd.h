@@ -3,7 +3,7 @@
 #include "stdafx.h"
 #include "XRectTracker.h"
 #include "XEnumAllWindowsRect.h"
-
+#include <vector>
 class CSnapShotWnd
 {
 public:
@@ -19,8 +19,10 @@ public:
     void OnRButtonUp(POINT point);
 	BOOL OnSetCursor(HWND pWnd, UINT nHitTest);
 	void OnMouseMove(POINT point);
-    void UpdateRemark();
+    void UpdateRemark(HWND hWnd, int wmEvent);
     int GetEncoderClsid(const WCHAR* format, CLSID* pClsid) ;
+
+    HWND CreateRemarkWnd();
 private:
 
 	HWND m_hWnd;
@@ -44,6 +46,7 @@ private:
 	//×ÀÃæ¾ä±ú
 	HDC m_DesktopDC;
 	//×ÀÃæBitmap
+    HBITMAP  m_pDcOldBitmap;
 	HBITMAP  m_DesktopBitmap;
 	HBITMAP m_pGray;
 
@@ -63,14 +66,16 @@ private:
 	//»­ÕÚÕÖ²ã
 	void DrawMask(HDC dc,XRect rect);
 	void DrawAutoWindow(HDC dc,POINT point);
+    //»­ÊäÈë¿ò
+    void DrawEditWindow(HDC dc);
 	//»­·Å´ó¾µ²ã
 	void DrawMagnifier(HDC dc);
 	void DrawMagnifierBg(HDC dc);
 	void DrawText(HDC dc,int x,int y,LPCWSTR lpString,int size);
 
 	void InitGrayBitMap();
-
-
-    HWND m_hEditWnd;
+    void Reset();
+public:
+    std::vector<HWND> m_vEdit;
 };
 
