@@ -154,8 +154,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     case  WM_HOTKEY:
         {
             m_SnapShotWnd.InitWindow(g_hWnd);
+            SetWindowPos(hWnd,HWND_TOPMOST,0,0,0,0,SWP_NOSIZE);
+            SetActiveWindow(hWnd);
             ShowWindow(hWnd,SW_SHOWMAXIMIZED);
-            UpdateWindow(hWnd);
+            UpdateWindow(hWnd);            
+
         }
         break;
     case WM_KEYDOWN:
@@ -182,11 +185,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             DestroyWindow(hWnd);
             break;
         case IDM_REMARK_EDIT:      
-            TRACE("edit event=%d",wmEvent);
-            if(wmEvent==EN_CHANGE)
-            {
-                m_SnapShotWnd.UpdateRemark();
-            }            
+            TRACE("edit event=%x",wmEvent);
+            m_SnapShotWnd.UpdateRemark((HWND)lParam,wmEvent);
             break;
         default:
             return DefWindowProc(hWnd, message, wParam, lParam);
@@ -224,7 +224,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         break;
     case WM_MOUSEMOVE:  
         point.x=LOWORD(lParam);  
-        point.y=HIWORD(lParam);  
+        point.y=HIWORD(lParam);          
         m_SnapShotWnd.OnMouseMove(point);
         break;
     case WM_LBUTTONUP:  
@@ -234,10 +234,20 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         break;
     case WM_SETCURSOR:
         nHitTest=LOWORD(lParam);
-        m_SnapShotWnd.OnSetCursor(hWnd,nHitTest);
+        m_SnapShotWnd.OnSetCursor((HWND)wParam,nHitTest);
         break;
     case WM_DESTROY:
         PostQuitMessage(0);
+        break;
+    //edit¿Ø¼þ
+    case WM_CTLCOLOREDIT:
+        {      
+            //if (lParam==m_SnapShotWnd.m_hEditWnd)
+            {   
+                ::SetBkMode((HDC)wParam,TRANSPARENT);                
+                return (LRESULT)HBRUSH(GetStockObject(NULL_BRUSH));
+            }            
+        }
         break;
     default:
         return DefWindowProc(hWnd, message, wParam, lParam);

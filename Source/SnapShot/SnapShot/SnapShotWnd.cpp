@@ -8,31 +8,33 @@ using namespace Gdiplus;
 CSnapShotWnd::CSnapShotWnd(void)
 {
     IsMove=FALSE;
-    m_hEditWnd=NULL;
+    m_DesktopDC=NULL;
+    m_pDcOldBitmap=NULL;
+    m_pGray=NULL;
+    
 }
+
 
 
 CSnapShotWnd::~CSnapShotWnd(void)
 {
+    Reset();
+    if(m_pGray!=NULL)
+    {
+        DeleteObject(m_pGray);
+        m_pGray=NULL;
+    }
 }
 extern HINSTANCE hInst;	
 #define  IDM_REMARK_EDIT  201
 void CSnapShotWnd::InitWindow(HWND hWnd)
 {
     m_hWnd = hWnd;
+    
+    Reset();
+
     TRACE("-----------InitWindow------------\n");
-    if(m_hEditWnd==NULL)
-    {
-        m_hEditWnd= CreateWindow(TEXT("edit"), TEXT(""),
-                WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL|ES_CENTER /*水平滚动*/,
-                80, 20, 200, 26,
-                hWnd, (HMENU)IDM_REMARK_EDIT, hInst, NULL
-                ); 
-    } 
-    SetWindowText(m_hEditWnd,NULL);
-    ShowWindow(m_hEditWnd,SW_HIDE);
-
-
+   
     InitScreenDC();
     InitGrayBitMap();
 
@@ -61,17 +63,15 @@ void CSnapShotWnd::OnLButtonDblClk(POINT point)
         DWORD err=GetLastError();
         return;
     }
-    TCHAR buff[1024];
-    int nRead=GetWindowText(m_hEditWnd,buff,1024);
-    nRead=SendMessage(m_hEditWnd,WM_GETTEXT,1024,(LPARAM)buff);
-    if(nRead>0)
+    //把备注写入截图
+    for (auto wnd : m_vEdit)
     {
-        ////画备注
-        int tipX=(m_RectTracker.m_rect.Width()-nRead*10)/2;
-        int tipY=nHeight-30;        
-        //tipText.Format(L"双击可以快速完成截图",areaWidth,areaHeight);
-        DrawText(hdcMem,tipX,tipY,buff,20);
-    }  
+        HDC edc=GetWindowDC(wnd);
+        XRect rc;
+        GetWindowRect(wnd,&rc);        
+        ::BitBlt(hdcMem, rc.left-m_RectTracker.m_rect.left,rc.top-m_RectTracker.m_rect.top,rc.Width(),rc.Height(), edc, 0,0,  SRCCOPY);                
+        ::ReleaseDC(wnd,edc);
+    }
 
     SelectObject(hdcMem,hOldbmp);
     //释放资源
@@ -121,6 +121,23 @@ int CSnapShotWnd::GetEncoderClsid(const WCHAR* format, CLSID* pClsid)
     free(pImageCodecInfo);  
     return -1;  
 }  
+
+HWND CSnapShotWnd::CreateRemarkWnd()
+{
+    TRACE("-----------Create Remark Window------------\n");
+    POINT point;
+    GetCursorPos(&point);
+    HWND hEditWnd= CreateWindow(TEXT("edit"), nullptr,
+            WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL|ES_MULTILINE | ES_WANTRETURN |ES_NOHIDESEL |ES_AUTOVSCROLL,// |ES_AUTOHSCROLL,
+            point.x, point.y, 40, 26,
+            m_hWnd, (HMENU)IDM_REMARK_EDIT, hInst, NULL
+            ); 
+    SetWindowText(hEditWnd,NULL);
+    ShowWindow(hEditWnd,SW_SHOW);
+    SetFocus(hEditWnd);
+    return hEditWnd;
+}
+
 void CSnapShotWnd::OnLButtonDown(POINT point)
 {
     TRACE("按下\n");
@@ -145,9 +162,10 @@ void CSnapShotWnd::OnLButtonDown(POINT point)
 void CSnapShotWnd::OnRButtonUp(POINT point)
 {
     TRACE("------------右键抬起----------\n");
-    m_RectTracker.m_rect.SetRectEmpty();
-    InvalidateRect(m_hWnd,NULL,false);
-    UpdateWindow(m_hWnd);
+    //m_RectTracker.m_rect.SetRectEmpty();
+    //InvalidateRect(m_hWnd,NULL,false);
+    //UpdateWindow(m_hWnd);
+    m_vEdit.push_back(CreateRemarkWnd());
 
 }
 void CSnapShotWnd::OnLButtonUp(POINT point)
@@ -165,21 +183,45 @@ void CSnapShotWnd::OnMouseMove(POINT point)
         //移动了
         m_RectTracker.TrackRubberBand(m_hWnd,m_LastPoint);
         m_IsCreateWindow =FALSE;        
-    }
+    }    
+    //焦点移回主窗口
+    SetFocus(m_hWnd);
     m_LastPoint = point;
     m_MousePoint = point;
     InvalidateRect(m_hWnd,NULL,false);
     UpdateWindow(m_hWnd);
 }
 
-void CSnapShotWnd::UpdateRemark()
+void CSnapShotWnd::UpdateRemark( HWND hWnd, int wmEvent )
 {
+    if(wmEvent==EN_CHANGE)
+    {
+
+    }    
+    else if(wmEvent==EN_VSCROLL)
+    {
+        RECT rc;
+        GetWindowRect(hWnd,&rc);
+        rc.bottom+=20;
+        MoveWindow(hWnd,rc.left,rc.top,rc.right-rc.left,rc.bottom-rc.top,TRUE);
+    }
+    else if (wmEvent==EN_HSCROLL)
+    {                
+        RECT rc;
+        GetWindowRect(hWnd,&rc);
+        rc.right+=20;
+        MoveWindow(hWnd,rc.left,rc.top,rc.right-rc.left,rc.bottom-rc.top,TRUE);
+    }
     InvalidateRect(m_hWnd,NULL,true);
     UpdateWindow(m_hWnd);
 }
 
 BOOL CSnapShotWnd::OnSetCursor(HWND pWnd, UINT nHitTest)
 {
+    if(pWnd!=m_hWnd)
+    {
+        SetFocus(pWnd);
+    }
     if(!m_RectTracker.m_rect.IsRectNull())
     {
         if (m_RectTracker.SetCursor(m_hWnd,nHitTest) )
@@ -221,6 +263,9 @@ void CSnapShotWnd::OnPaint(HDC pDc)
     //画放大镜层
     DrawMagnifier(bufferDC);
 
+    //画edit的外框
+    DrawEditWindow(bufferDC);
+
     //双缓冲技术
     BitBlt(pDc,0,0,m_ScreenWidth,m_ScreenHeight,bufferDC,0,0,SRCCOPY);
     SelectObject(bufferDC,pOldBitmap);
@@ -232,7 +277,6 @@ void CSnapShotWnd::OnPaint(HDC pDc)
 }
 void CSnapShotWnd::InitScreenDC()
 {
-
     //计算屏幕的宽和高
     m_ScreenWidth  = GetSystemMetrics(SM_CXSCREEN);  
     m_ScreenHeight = GetSystemMetrics(SM_CYSCREEN); 
@@ -248,11 +292,10 @@ void CSnapShotWnd::InitScreenDC()
     HWND hwnd = GetDesktopWindow();
     HDC dc =GetWindowDC(hwnd);
     //获取桌面窗口DC
+    
     m_DesktopDC =CreateCompatibleDC(dc); 
-
     m_DesktopBitmap = CreateCompatibleBitmap(dc, m_ScreenWidth, m_ScreenHeight);
-    SelectObject(m_DesktopDC,m_DesktopBitmap); 
-
+    m_pDcOldBitmap=(HBITMAP)SelectObject(m_DesktopDC,m_DesktopBitmap); 
     BitBlt(m_DesktopDC,0, 0, m_ScreenWidth, m_ScreenHeight, dc, 0, 0, SRCCOPY); 
 }
 void CSnapShotWnd::InitGrayBitMap()
@@ -262,7 +305,7 @@ void CSnapShotWnd::InitGrayBitMap()
         //灰色位图
         HDC memdc = CreateCompatibleDC(m_DesktopDC);
         m_pGray = CreateCompatibleBitmap(m_DesktopDC, 1, 1);
-        SelectObject(memdc, m_pGray);
+        HBITMAP pOld=(HBITMAP)SelectObject(memdc, m_pGray);
         RECT rect;
         rect.left = 0;
         rect.right = 1;
@@ -271,10 +314,34 @@ void CSnapShotWnd::InitGrayBitMap()
         HBRUSH brush = CreateSolidBrush(RGB(0,0,0));//黑色
         int res = FillRect(memdc, &rect, brush);
 
+        SelectObject(memdc,pOld);
         DeleteObject(brush);
         DeleteDC(memdc);
     }
 }
+
+void CSnapShotWnd::Reset()
+{
+    IsMove=FALSE;    
+    if(m_pDcOldBitmap!=NULL)
+    {
+        ASSERT(m_DesktopDC!=NULL);
+        SelectObject(m_DesktopDC,m_pDcOldBitmap);
+        DeleteObject(m_DesktopBitmap);
+        DeleteDC(m_DesktopDC);
+        m_pDcOldBitmap=NULL;
+        m_DesktopBitmap=NULL;        
+        m_DesktopDC=NULL;
+    }
+    for (auto wnd : m_vEdit)
+    {
+        CloseWindow(wnd);
+    }
+    m_vEdit.clear();
+    m_RectTracker.m_rect.SetRectEmpty();
+    
+}
+
 //************************************
 // 方法名称: DrawAutoWindow
 // 创建日期: 2017/03/31
@@ -310,11 +377,43 @@ void CSnapShotWnd::DrawAutoWindow(HDC dc,POINT point)
             SelectObject(dc,pOldBrush);
             SelectObject(dc,pOldPen);
         }
-
         DeleteObject(pen);
         DeleteObject(pbrush);
     }
 
+}
+
+void CSnapShotWnd::DrawEditWindow( HDC dc )
+{
+    for(auto wnd : m_vEdit)
+    {
+        if(GetFocus()==wnd)
+        {
+            XRect rc;
+            GetWindowRect(wnd,&rc);
+            HPEN pen=CreatePen(PS_DASH,1,RGB(255,255,255));          // 【这里绘制成黑色】
+            HPEN blkpen=CreatePen(PS_DASHDOT,1,RGB(0,0,0));          // 【这里绘制成黑色】
+
+            HPEN pOldPen = (HPEN)SelectObject(dc,pen);      // 【使用画笔画矩形】
+
+            HBRUSH pbrush = (HBRUSH)GetStockObject(NULL_BRUSH);
+            HBRUSH pOldBrush = (HBRUSH)SelectObject(dc,pbrush);
+
+            Rectangle(dc,rc.left-1,rc.top-1,rc.right+1,rc.bottom+1);//画出矩形
+            SelectObject(dc,blkpen);      // 【使用画笔画矩形】
+            Rectangle(dc,rc.left-1,rc.top-1,rc.right+1,rc.bottom+1);//画出矩形
+
+            if(NULL != pOldPen && NULL != pOldBrush)
+            {
+                SelectObject(dc,pOldBrush);
+                SelectObject(dc,pOldPen);
+            }
+
+            DeleteObject(pen);
+            DeleteObject(blkpen);
+            DeleteObject(pbrush);            
+        }
+    }
 }
 
 //************************************
@@ -386,15 +485,6 @@ void CSnapShotWnd::DrawMask(HDC dc,XRect rect)
 //************************************
 void CSnapShotWnd::DrawMagnifier(HDC dc)
 {
-    if(m_RectTracker.m_rect.IsRectNull())
-    {
-        if(IsWindowVisible(m_hEditWnd))
-        {           
-            ShowWindow(m_hEditWnd,SW_HIDE);
-        }
-        return ;
-    }
-
     POINT point = m_MousePoint;
     //GetCursorPos(&point);
 
@@ -403,93 +493,68 @@ void CSnapShotWnd::DrawMagnifier(HDC dc)
 
     m_MagnifierRect.left = m_RectTracker.m_rect.left;
     m_MagnifierRect.top = m_RectTracker.m_rect.top - m_MagnifierSize - 20;
-    if (m_MagnifierRect.top<0)
-    {
-        m_MagnifierRect.top=m_RectTracker.m_rect.bottom+20; 
-    }
-    if(!IsWindowVisible(m_hEditWnd))
-    {
-        //SetWindowPos(m_hEditWnd,HWND_TOPMOST,m_RectTracker.m_rect.left,m_RectTracker.m_rect.top,m_RectTracker.m_rect.Width(),20,SWP_SHOWWINDOW);
-        MoveWindow(m_hEditWnd,m_RectTracker.m_rect.left,m_MagnifierRect.top,m_RectTracker.m_rect.Width(),20,SWP_SHOWWINDOW);            
-        ShowWindow(m_hEditWnd,SW_SHOW);
-        SetFocus(m_hEditWnd);
-    }
-
     m_MagnifierRect.right = m_MagnifierRect.left + m_MagnifierSize;
-    m_MagnifierRect.bottom = m_MagnifierRect.top + m_MagnifierSize; 
-
-
-    TCHAR buff[1024];
-    int nRead=GetWindowText(m_hEditWnd,buff,1024);
-    nRead=SendMessage(m_hEditWnd,WM_GETTEXT,1024,(LPARAM)buff);
-    if(nRead>0)
-    {
-        ////画备注
-        int tipX=m_RectTracker.m_rect.left+(m_RectTracker.m_rect.Width()-nRead*10)/2;
-        int tipY=m_RectTracker.m_rect.bottom-30;        
-        //tipText.Format(L"双击可以快速完成截图",areaWidth,areaHeight);
-        DrawText(dc,tipX,tipY,buff,20);
-    }
+    m_MagnifierRect.bottom = m_MagnifierRect.top + m_MagnifierSize;
 
 
 
-    //int width = m_MagnifierSize*0.5;
-    //int height = width;
-    //int x =point.x - width/2;
-    //int y =point.y - height/2;
+    int width = m_MagnifierSize*0.5;
+    int height = width;
+    int x =point.x - width/2;
+    int y =point.y - height/2;
 
-    ////1.画背景
-    //DrawMagnifierBg(dc);
-    ////2.画文字
-    ////画当前RGB
-    //int rgbX=m_MagnifierRect.left+m_MagnifierSize+8;
-    //int rgbY=m_MagnifierRect.top+6;
-    //COLORREF pixel=GetPixel(dc,point.x,point.y);
-    //int r=GetRValue(pixel);
-    //int g=GetGValue(pixel);
-    //int b=GetBValue(pixel);
-    //CString rgbText;
-    //rgbText.Format(L"当前RGB:(%d,%d,%d)",r,g,b);
-    //DrawText(dc,rgbX,rgbY,rgbText.GetBuffer(0),10);
-    ////画当前区域大小
-    //int areaX=m_MagnifierRect.left+m_MagnifierSize+8;
-    //int areaY=m_MagnifierRect.top+24;
-    //int areaWidth=m_RectTracker.m_rect.Width();
-    //int areaHeight=m_RectTracker.m_rect.Height();
-    //CString areaText;
-    //areaText.Format(L"区域大小:(%d,%d)",areaWidth,areaHeight);
-    //DrawText(dc,areaX,areaY,areaText.GetBuffer(0),10);
-    ////画提示
-    //int tipX=m_MagnifierRect.left+m_MagnifierSize+8;
-    //int tipY=m_MagnifierRect.top+42;
-    //CString tipText;
-    //tipText.Format(L"双击可以快速完成截图",areaWidth,areaHeight);
-    //DrawText(dc,tipX,tipY,tipText.GetBuffer(0),10);
-    //
+    //1.画背景
+    DrawMagnifierBg(dc);
+    //2.画文字
+    //画当前RGB
+    int rgbX=m_MagnifierRect.left+m_MagnifierSize+8;
+    int rgbY=m_MagnifierRect.top+6;
+    COLORREF pixel=GetPixel(dc,point.x,point.y);
+    int r=GetRValue(pixel);
+    int g=GetGValue(pixel);
+    int b=GetBValue(pixel);
+    CString rgbText;
+    rgbText.Format(L"当前RGB:(%d,%d,%d)",r,g,b);
+    DrawText(dc,rgbX,rgbY,rgbText.GetBuffer(0),10);
+    //画当前区域大小
+    int areaX=m_MagnifierRect.left+m_MagnifierSize+8;
+    int areaY=m_MagnifierRect.top+24;
+    int areaWidth=m_RectTracker.m_rect.Width();
+    int areaHeight=m_RectTracker.m_rect.Height();
+    CString areaText;
+    areaText.Format(L"区域大小:(%d,%d)",areaWidth,areaHeight);
+    DrawText(dc,areaX,areaY,areaText.GetBuffer(0),10);
+    //画提示
+    int tipX=m_MagnifierRect.left+m_MagnifierSize+8;
+    int tipY=m_MagnifierRect.top+42;
+    CString tipText;
+    tipText.Format(L"双击可以快速完成截图",areaWidth,areaHeight);
+    DrawText(dc,tipX,tipY,tipText.GetBuffer(0),10);
 
 
-    ////3.放大绘制
-    //StretchBlt(dc, m_MagnifierRect.left,
-    //	m_MagnifierRect.top,   
-    //	m_MagnifierRect.Width(),  
-    //	m_MagnifierRect.Height(),   
-    //	dc,      
-    //	x,
-    //	y,   
-    //	width,   
-    //	height, 
-    //	SRCCOPY);
-    ////4.接下来画十字图标
-    //HPEN pen=CreatePen(PS_SOLID,2,RGB(0,0,0));          // 【这里绘制成红色】
-    //HPEN pOldPen = (HPEN)SelectObject(dc,pen);      // 【使用画笔画矩形】
-    ////画竖线
-    //MoveToEx(dc, m_MagnifierRect.left + m_MagnifierSize/2, m_MagnifierRect.top, NULL); 
-    //LineTo(dc, m_MagnifierRect.left + m_MagnifierSize/2, m_MagnifierRect.bottom);  
-    ////画横线
-    //MoveToEx(dc, m_MagnifierRect.left, m_MagnifierRect.top + m_MagnifierRect.Height()/2, NULL); 
-    //LineTo(dc, m_MagnifierRect.right, m_MagnifierRect.top + m_MagnifierRect.Width()/2); 
 
-    //DeleteObject(pen);
+    //3.放大绘制
+    StretchBlt(dc, m_MagnifierRect.left,
+        m_MagnifierRect.top,   
+        m_MagnifierRect.Width(),  
+        m_MagnifierRect.Height(),   
+        dc,      
+        x,
+        y,   
+        width,   
+        height, 
+        SRCCOPY);
+    //4.接下来画十字图标
+    HPEN pen=CreatePen(PS_SOLID,2,RGB(0,0,0));          // 【这里绘制成红色】
+    HPEN pOldPen = (HPEN)SelectObject(dc,pen);      // 【使用画笔画矩形】
+    //画竖线
+    MoveToEx(dc, m_MagnifierRect.left + m_MagnifierSize/2, m_MagnifierRect.top, NULL); 
+    LineTo(dc, m_MagnifierRect.left + m_MagnifierSize/2, m_MagnifierRect.bottom);  
+    //画横线
+    MoveToEx(dc, m_MagnifierRect.left, m_MagnifierRect.top + m_MagnifierRect.Height()/2, NULL); 
+    LineTo(dc, m_MagnifierRect.right, m_MagnifierRect.top + m_MagnifierRect.Width()/2); 
+
+    DeleteObject(pen);
 
 }
 
@@ -546,6 +611,4 @@ void CSnapShotWnd::DrawText(HDC dc,int x,int y,LPCWSTR lpString,int size)
     SetTextColor(dc, RGB(255,255,255));   
     SetBkMode(dc, TRANSPARENT); 
     TextOut(dc, x,y,lpString, lstrlen(lpString)); 
-
-
 }
