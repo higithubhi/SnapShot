@@ -1,17 +1,114 @@
 #include "stdafx.h"
 #include "SnapShotWnd.h"
-
 #include <GdiPlus.h>
+#include "resource.h"
+
+
 #pragma comment(lib, "gdiplus.lib")
 using namespace Gdiplus;
 #pragma comment(lib, "msimg32")     // 【AlphaBlend,透明化】
+
+WNDPROC wpOrigEditProc;
+LRESULT APIENTRY EditSubclassProc(
+	HWND hwnd,
+	UINT uMsg,
+	WPARAM wParam,
+	LPARAM lParam)
+{
+	switch (uMsg)
+	{
+		case WM_SETCURSOR:
+			TRACE("hwnd=%x,wp=%x,lp=%x\r\n");
+			::SetCursor(LoadCursor(NULL, IDC_IBEAM));
+			SetFocus(hwnd);
+			return TRUE;
+			break;
+		case WM_LBUTTONDOWN:
+		{
+			if (::GetCapture() != NULL)
+			{
+				break;
+			}		
+			::SetCursor(LoadCursor(NULL, IDC_SIZEALL));
+			SetCapture(hwnd);
+			break;
+		}
+		case WM_LBUTTONUP:
+		{
+			if (GetCapture() == hwnd)
+			{
+				ReleaseCapture();
+			}
+			break;
+		}
+		case WM_MOUSEMOVE:
+		{
+			if (::GetCapture() == hwnd)
+			{
+
+				//int x = LOWORD(lParam);
+				//int y = HIWORD(lParam);
+				POINT point;
+				GetCursorPos(&point);
+				XRect rc;
+				GetWindowRect(hwnd, &rc);
+				rc.right = rc.Width() + point.x;
+				rc.left = point.x;
+				rc.bottom = rc.Height() + point.y;
+				rc.top = point.y;
+				MoveWindow(hwnd, point.x, point.y, rc.Width(), rc.Height(), TRUE);
+				HWND pHwnd=GetParent(hwnd);
+				InvalidateRect(pHwnd, NULL, TRUE);
+				UpdateWindow(pHwnd);
+				return FALSE;
+			}
+		}
+		break;
+		case WM_DESTROY:
+			// Remove the subclass from the edit control. 
+			SetWindowLong(hwnd, GWL_WNDPROC,
+				(LONG)wpOrigEditProc);
+			break;
+	}		
+	return CallWindowProc(wpOrigEditProc, hwnd, uMsg,
+		wParam, lParam);
+}
+
+
+
 CSnapShotWnd::CSnapShotWnd(void)
 {
     IsMove=FALSE;
     m_DesktopDC=NULL;
     m_pDcOldBitmap=NULL;
     m_pGray=NULL;
-    
+	
+	GetObject(GetStockObject(DEVICE_DEFAULT_FONT), sizeof(m_lf), &m_lf);
+	m_cf.lStructSize = sizeof(CHOOSEFONT);
+	m_cf.hwndOwner = NULL;
+	m_cf.hDC = NULL;
+	m_cf.lpLogFont = &m_lf;
+	m_cf.iPointSize = 0;
+	m_cf.Flags = CF_INITTOLOGFONTSTRUCT | CF_EFFECTS | CF_SCREENFONTS;
+	m_cf.rgbColors = 0;
+	m_cf.lCustData = 0;
+	m_cf.lpfnHook = NULL;
+	m_cf.lpTemplateName = NULL;
+	m_cf.hInstance = NULL;
+	m_cf.lpszStyle = NULL;
+	m_cf.nFontType = 0;
+	m_cf.nSizeMin = 0;
+	m_cf.nSizeMax = 0;
+
+	static COLORREF acrCustClr[16];
+	ZeroMemory(&m_color, sizeof(m_color));
+	m_color.lStructSize = sizeof(CHOOSECOLOR);
+	m_color.hwndOwner = NULL;
+	m_color.lpCustColors = (LPDWORD)acrCustClr;
+	m_color.rgbResult = RGB(0,0,0);
+	m_color.Flags = CC_FULLOPEN | CC_RGBINIT;
+
+	GetCurrentDirectory(sizeof(szCurDir), szCurDir);
 }
 
 
@@ -43,13 +140,14 @@ void CSnapShotWnd::InitWindow(HWND hWnd)
     m_RectTracker.SetMousePoint(&m_MousePoint);
 
 }
+
 void CSnapShotWnd::OnLButtonDblClk(POINT point)
 {
     TRACE("双击\n");
     //PostQuitMessage(0);
     if (m_RectTracker.m_rect.IsRectNull())
     {        
-        MessageBox(NULL,LPCTSTR("需要先选中截图区域"),LPCTSTR("提示"),MB_ICONWARNING);
+        MessageBox(m_hWnd,TEXT("需要先选中截图区域"),TEXT("提示"),MB_ICONWARNING);
         return;
     }
     
@@ -77,21 +175,52 @@ void CSnapShotWnd::OnLButtonDblClk(POINT point)
     //释放资源
     DeleteDC(hdcMem); 
 
+	//打开文件保存对话框
+	TCHAR filename[1024] = {0};
+	OPENFILENAME ofn = { OPENFILENAME_SIZE_VERSION_400 };//or  {sizeof (OPENFILENAME)}      
+	ofn.hwndOwner = m_hWnd;
+	ofn.lpstrFilter = TEXT("JPEG\0 * .jpg\0All\0 * .*\0"); 
+	//过滤器 如果为 NULL 不使用过滤器    	
+	ofn.lpstrFile = filename;
+	ofn.nMaxFile = 1024;
+	ofn.lpstrTitle = TEXT("保存文件");
+	ofn.lpstrInitialDir = szCurDir;//设置对话框显示的初始目录    
+	ofn.Flags = OFN_EXPLORER | OFN_OVERWRITEPROMPT;
+	BOOL bOk = GetSaveFileName(&ofn);	
+	if (!bOk)
+	{		
+		if (MessageBox(m_hWnd,TEXT("确定放弃保存"), TEXT("提示"), MB_YESNO) == IDYES)
+		{
+			return;
+		}
+	}
+	StrCpyN(szCurDir, filename, ofn.nFileOffset);
+	if (ofn.nFileExtension == 0)
+	{
+		StrCat(filename, TEXT(".jpg"));
+	}
     //保存位图到文件
     Bitmap *p_bmp = Bitmap::FromHBITMAP(hBitmap, NULL);
 
     CLSID jpgClsid;
-    int result = GetEncoderClsid(L"image/jpeg", &jpgClsid);
+    int result = GetEncoderClsid(TEXT("image/jpeg"), &jpgClsid);
     if(result != -1)
     {
         //std::cout << "Encoder succeeded" << std::endl;
     }
     else
     {
-        MessageBox(NULL,LPCTSTR("创建jpeg文件失败"),LPCTSTR("警告"),MB_ICONWARNING);
+        MessageBox(NULL,TEXT("创建jpeg文件失败"),TEXT("警告"),MB_ICONWARNING);
         return;
     }
-    p_bmp->Save(L"screen.jpg", &jpgClsid, NULL);
+	Gdiplus::EncoderParameters eps;
+	int lQuality = 100;
+	eps.Count = 1;
+	eps.Parameter[0].Guid = Gdiplus::EncoderQuality;
+	eps.Parameter[0].NumberOfValues = 1;
+	eps.Parameter[0].Type = Gdiplus::EncoderParameterValueTypeLong;
+	eps.Parameter[0].Value = &lQuality;
+    p_bmp->Save(filename, &jpgClsid, &eps);
     delete p_bmp;
     DeleteObject(hBitmap);
 }
@@ -127,15 +256,43 @@ HWND CSnapShotWnd::CreateRemarkWnd()
     TRACE("-----------Create Remark Window------------\n");
     POINT point;
     GetCursorPos(&point);
+	int width = 50; m_cf.lpLogFont->lfWidth;
+	int height = 50; m_cf.lpLogFont->lfHeight;
+	//默认5个字符大小，2行
     HWND hEditWnd= CreateWindow(TEXT("edit"), nullptr,
-            WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL|ES_MULTILINE | ES_WANTRETURN |ES_NOHIDESEL |ES_AUTOVSCROLL,// |ES_AUTOHSCROLL,
-            point.x, point.y, 40, 26,
+            WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_WANTRETURN |ES_NOHIDESEL | ES_AUTOVSCROLL |ES_AUTOHSCROLL | CS_OWNDC,
+            point.x-width, point.y-height, width*5, height*2,
             m_hWnd, (HMENU)IDM_REMARK_EDIT, hInst, NULL
-            ); 
+            ); 	
+	HFONT hFont = CreateFontIndirect(m_cf.lpLogFont);	
+	::SendMessage(hEditWnd, WM_SETFONT, (WPARAM)hFont, TRUE);	
+	SetWindowLong(hEditWnd, GWL_USERDATA, m_color.rgbResult);
+
+	wpOrigEditProc = (WNDPROC)SetWindowLong(hEditWnd,
+		GWL_WNDPROC, (LONG)EditSubclassProc);
     SetWindowText(hEditWnd,NULL);
     ShowWindow(hEditWnd,SW_SHOW);
+
     SetFocus(hEditWnd);
+	m_vEdit.push_back(hEditWnd);
+	UpdateRemark(hEditWnd, EN_CHANGE);
     return hEditWnd;
+}
+
+void CSnapShotWnd::SelectFont()
+{
+	m_cf.hwndOwner = m_hWnd;
+	if (ChooseFont(&m_cf))
+	{
+		m_color.rgbResult = m_cf.rgbColors;
+	}
+}
+
+
+void CSnapShotWnd::SelectColor()
+{
+	m_color.hwndOwner = m_hWnd;
+	ChooseColor(&m_color);
 }
 
 void CSnapShotWnd::OnLButtonDown(POINT point)
@@ -165,8 +322,8 @@ void CSnapShotWnd::OnRButtonUp(POINT point)
     //m_RectTracker.m_rect.SetRectEmpty();
     //InvalidateRect(m_hWnd,NULL,false);
     //UpdateWindow(m_hWnd);
-    m_vEdit.push_back(CreateRemarkWnd());
-
+    
+	ShowPopupMenu();
 }
 void CSnapShotWnd::OnLButtonUp(POINT point)
 {
@@ -185,7 +342,10 @@ void CSnapShotWnd::OnMouseMove(POINT point)
         m_IsCreateWindow =FALSE;        
     }    
     //焦点移回主窗口
-    SetFocus(m_hWnd);
+	/*if (GetFocus() != m_hWnd)
+	{
+		SetFocus(m_hWnd);
+	}*/
     m_LastPoint = point;
     m_MousePoint = point;
     InvalidateRect(m_hWnd,NULL,false);
@@ -195,33 +355,57 @@ void CSnapShotWnd::OnMouseMove(POINT point)
 void CSnapShotWnd::UpdateRemark( HWND hWnd, int wmEvent )
 {
     if(wmEvent==EN_CHANGE)
-    {
+    {	
+		TCHAR buf[1024] = { TCHAR('8') };
+		HDC hdc = GetWindowDC(hWnd);	
+		SIZE sz;
+		HFONT hFont =(HFONT) ::SendMessage(hWnd, WM_GETFONT, 0, 0);
+		HFONT hOld=(HFONT)SelectObject(hdc, hFont);
+		GetTextExtentPoint32(hdc, buf, 1, &sz);		
+		SelectObject(hdc, hOld);		
+		ReleaseDC(hWnd,hdc);
+		int n = GetWindowText(hWnd, buf, 1024);		
+		int row=2;
+		int nMaxRow = 5;		
+		LPTSTR pLineHead=buf, pLineEnd=buf,pMaxLine=buf;
+		do 
+		{
+			pLineEnd = StrChr(pLineHead, TCHAR('\n'));
+			if (pLineEnd != NULL)
+			{
+				row++;
+				if (pLineEnd - pLineHead > nMaxRow)
+				{
+					nMaxRow = pLineEnd - pLineHead+1;
+					pMaxLine = pLineHead;
+				}
+				pLineHead = pLineEnd + 1;
+			}
+			else
+			{
+				pLineEnd = buf + n;
+				if (pLineEnd - pLineHead > nMaxRow)
+				{
+					nMaxRow = pLineEnd - pLineHead+1;
+					pMaxLine = pLineHead;
+				}
+			}
+		} while (pLineEnd<buf+n);
+		RECT rc;
+		GetWindowRect(hWnd, &rc);			
+		rc.right = rc.left + sz.cx*nMaxRow;
+		rc.bottom = rc.top + sz.cy*row+3;
 
-    }    
-    else if(wmEvent==EN_VSCROLL)
-    {
-        RECT rc;
-        GetWindowRect(hWnd,&rc);
-        rc.bottom+=20;
-        MoveWindow(hWnd,rc.left,rc.top,rc.right-rc.left,rc.bottom-rc.top,TRUE);
-    }
-    else if (wmEvent==EN_HSCROLL)
-    {                
-        RECT rc;
-        GetWindowRect(hWnd,&rc);
-        rc.right+=20;
-        MoveWindow(hWnd,rc.left,rc.top,rc.right-rc.left,rc.bottom-rc.top,TRUE);
-    }
+		MoveWindow(hWnd,rc.left,rc.top,rc.right-rc.left,rc.bottom-rc.top,TRUE);
+    } 
     InvalidateRect(m_hWnd,NULL,true);
     UpdateWindow(m_hWnd);
 }
 
 BOOL CSnapShotWnd::OnSetCursor(HWND pWnd, UINT nHitTest)
 {
-    if(pWnd!=m_hWnd)
-    {
-        SetFocus(pWnd);
-    }
+	SetFocus(pWnd);
+
     if(!m_RectTracker.m_rect.IsRectNull())
     {
         if (m_RectTracker.SetCursor(m_hWnd,nHitTest) )
@@ -340,6 +524,21 @@ void CSnapShotWnd::Reset()
     m_vEdit.clear();
     m_RectTracker.m_rect.SetRectEmpty();
     
+}
+
+
+void CSnapShotWnd::ShowPopupMenu()
+{
+	POINT point;
+	GetCursorPos(&point);
+
+	HMENU hMenu = CreatePopupMenu();  //创建弹出式菜单  
+	HMENU hSrcMenu = LoadMenu(hInst, MAKEINTRESOURCE(IDC_SNAPSHOT)); //加载菜单资源  
+	AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hSrcMenu, _T("Popup")); //附加到弹出菜单  
+	HMENU hTackMenu = GetSubMenu(hMenu, 0); //取出目标菜单  
+	TrackPopupMenuEx(GetSubMenu(hTackMenu,0), TPM_LEFTALIGN, point.x, point.y, m_hWnd, NULL); //弹出菜单  
+	DestroyMenu(hSrcMenu); //销毁加载的菜单  
+	DestroyMenu(hMenu); //销毁弹出菜单  
 }
 
 //************************************
@@ -514,7 +713,7 @@ void CSnapShotWnd::DrawMagnifier(HDC dc)
     int g=GetGValue(pixel);
     int b=GetBValue(pixel);
     CString rgbText;
-    rgbText.Format(L"当前RGB:(%d,%d,%d)",r,g,b);
+    rgbText.Format(TEXT("当前RGB:(%d,%d,%d)"),r,g,b);
     DrawText(dc,rgbX,rgbY,rgbText.GetBuffer(0),10);
     //画当前区域大小
     int areaX=m_MagnifierRect.left+m_MagnifierSize+8;
@@ -522,13 +721,13 @@ void CSnapShotWnd::DrawMagnifier(HDC dc)
     int areaWidth=m_RectTracker.m_rect.Width();
     int areaHeight=m_RectTracker.m_rect.Height();
     CString areaText;
-    areaText.Format(L"区域大小:(%d,%d)",areaWidth,areaHeight);
+    areaText.Format(TEXT("区域大小:(%d,%d)"),areaWidth,areaHeight);
     DrawText(dc,areaX,areaY,areaText.GetBuffer(0),10);
     //画提示
     int tipX=m_MagnifierRect.left+m_MagnifierSize+8;
     int tipY=m_MagnifierRect.top+42;
     CString tipText;
-    tipText.Format(L"双击可以快速完成截图",areaWidth,areaHeight);
+    tipText.Format(TEXT("双击可以快速完成截图"),areaWidth,areaHeight);
     DrawText(dc,tipX,tipY,tipText.GetBuffer(0),10);
 
 

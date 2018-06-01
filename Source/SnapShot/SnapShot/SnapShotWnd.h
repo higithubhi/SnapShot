@@ -3,6 +3,7 @@
 #include "stdafx.h"
 #include "XRectTracker.h"
 #include "XEnumAllWindowsRect.h"
+#include <CommDlg.h>
 #include <vector>
 class CSnapShotWnd
 {
@@ -23,6 +24,9 @@ public:
     int GetEncoderClsid(const WCHAR* format, CLSID* pClsid) ;
 
     HWND CreateRemarkWnd();
+
+	void SelectFont();
+	void SelectColor();
 private:
 
 	HWND m_hWnd;
@@ -75,6 +79,17 @@ private:
 
 	void InitGrayBitMap();
     void Reset();
+	//ÓÒ¼ü²Ëµ¥
+	void ShowPopupMenu();
+	//×ÖÌå£¬ÑÕÉ«
+	CHOOSEFONT m_cf;
+	LOGFONT m_lf;
+	CHOOSECOLOR  m_color;
+	TCHAR szCurDir[1024];
+
+
+
+
 public:
     std::vector<HWND> m_vEdit;
 };

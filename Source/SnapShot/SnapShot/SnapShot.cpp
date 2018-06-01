@@ -182,8 +182,33 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         {
 
         case IDM_EXIT:
-            DestroyWindow(hWnd);
+
+            //DestroyWindow(hWnd);
+			ShowWindow(hWnd, SW_HIDE);
+			UpdateWindow(hWnd);
+			return true;
             break;
+		case IDM_SAVE:
+			GetCursorPos(&point);
+			m_SnapShotWnd.OnLButtonDblClk(point);
+			return TRUE;
+			break;
+		case IDM_CREATEREMARK:
+		{
+			m_SnapShotWnd.CreateRemarkWnd();
+			return true;
+			break;
+		}
+		case IDM_FONT:
+		{
+			m_SnapShotWnd.SelectFont();
+			break;
+		}
+		case IDM_COLOR:
+		{
+			m_SnapShotWnd.SelectColor();
+			break;
+		}			
         case IDM_REMARK_EDIT:      
             TRACE("edit event=%x",wmEvent);
             m_SnapShotWnd.UpdateRemark((HWND)lParam,wmEvent);
@@ -244,7 +269,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         {      
             //if (lParam==m_SnapShotWnd.m_hEditWnd)
             {   
-                ::SetBkMode((HDC)wParam,TRANSPARENT);                
+                ::SetBkMode((HDC)wParam,TRANSPARENT);      	
+				LONG ul=GetWindowLong((HWND)lParam, GWL_USERDATA);
+				SetTextColor((HDC)wParam, ul);
                 return (LRESULT)HBRUSH(GetStockObject(NULL_BRUSH));
             }            
         }
